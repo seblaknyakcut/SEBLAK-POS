@@ -745,7 +745,9 @@ function normalizeState() {
   state.settings.selfOrderPromoImageDataUrl = normalizePersistedImageUrl(state.settings.selfOrderPromoImageDataUrl);
   state.settings.selfOrderPromoSlides = normalizeSelfOrderPromoSlides(state.settings.selfOrderPromoSlides, { includeDraft: true });
   state.settings.selfOrderUpsellProductIds = normalizeSelfOrderUpsellProductIds(state.settings.selfOrderUpsellProductIds);
-  state.settings.receiptLogoDataUrl = normalizePersistedImageUrl(state.settings.receiptLogoDataUrl);
+  const deviceLogo = normalizePersistedImageUrl(state.settings.receiptLogoDataUrl);
+  state.settings.receiptLogoDataUrl = /^data:image\/(?:png|jpeg);base64,/i.test(deviceLogo) ? deviceLogo : "";
+  if (!state.settings.receiptLogoDataUrl) state.settings.receiptShowLogo = false;
   if (state.settings.databaseMode === "Browser LocalStorage") state.settings.databaseMode = "Browser IndexedDB";
   state.orders ||= [];
   state.syncQueue ||= [];
@@ -5356,10 +5358,7 @@ function normalizeStoreSettingsRow(row) {
     receiptPhone: row.store_phone ?? receiptSettings.phone ?? state.settings.receiptPhone ?? "",
     receiptFooter: row.receipt_footer ?? receiptSettings.footer ?? state.settings.receiptFooter ?? "",
     receiptWidth: row.receipt_width || receiptSettings.width || state.settings.receiptWidth || "58mm",
-    receiptShowLogo: "showLogo" in receiptSettings ? receiptSettings.showLogo === true : state.settings.receiptShowLogo,
-    receiptLogoDataUrl: normalizePersistedImageUrl(receiptSettings.logoDataUrl || receiptSettings.logo || state.settings.receiptLogoDataUrl || ""),
-    receiptLogoLength: Number.isFinite(Number(receiptSettings.logoLength)) ? Number(receiptSettings.logoLength) : state.settings.receiptLogoLength,
-    receiptImageMode: receiptSettings.imageMode || state.settings.receiptImageMode || "A",
+    // Logo struk dan pilihan cetak gambarnya khusus perangkat ini.
     receiptBottomFeedLines: Number.isFinite(Number(receiptSettings.bottomFeedLines))
       ? Math.max(0, Math.min(8, Number(receiptSettings.bottomFeedLines)))
       : Number(state.settings.receiptBottomFeedLines || 1),
@@ -5428,10 +5427,6 @@ function storeSettingsPayload() {
         width: settings.receiptWidth || "58mm",
         showTable: settings.receiptShowTable !== false,
         showQr: settings.receiptShowQr === true,
-        showLogo: settings.receiptShowLogo === true,
-        logoDataUrl: settings.receiptLogoDataUrl || "",
-        logoLength: Number(settings.receiptLogoLength || 12),
-        imageMode: settings.receiptImageMode || "A",
         bottomFeedLines: Math.max(0, Math.min(8, Number(settings.receiptBottomFeedLines || 1))),
         showReceiptCode: settings.receiptShowReceiptCode === true,
         showOrderQueueNumber: settings.receiptShowOrderQueueNumber === true,
@@ -7617,7 +7612,7 @@ function render() {
         ${renderSidebarAccount()}
         <div class="brand">
           <button class="brand-menu" onclick="toggleNav()" aria-label="Menu">&#9776;</button>
-          <h1>SEBLAK POS</h1>
+          <h1><img class="brand-app-logo" src="assets/app-logo.png" alt="" />SEBLAK POS</h1>
           <p>Aplikasi kasir dan produk outlet</p>
         </div>
         <nav class="nav">
@@ -7839,7 +7834,7 @@ function renderStaffLoginScreen() {
     <main class="staff-lock-screen">
       <section class="staff-lock-card" aria-labelledby="staff-login-title">
         <div class="staff-lock-brand">
-          <span class="staff-lock-logo" aria-hidden="true">${navIcon("store")}</span>
+          <span class="staff-lock-logo" aria-hidden="true"><img src="assets/app-logo.png" alt="" /></span>
           <div class="staff-lock-heading">
             <small>AKSES AKUN</small>
             <h1 id="staff-login-title">SEBLAK POS</h1>
@@ -8609,7 +8604,8 @@ function receiptPairText(label, value, width) {
 
 function receiptPlainText(order) {
   const model = receiptPrintModel(order);
-  const width = model.widthChars;
+  const leftInset = model.width === "58mm" ? 1 : 0;
+  const width = model.widthChars - leftInset;
   const lines = [];
   model.headerLines.forEach(line => lines.push(receiptCenterLine(line, width)));
   lines.push(receiptSeparator(width));
@@ -8630,7 +8626,9 @@ function receiptPlainText(order) {
   }
   if (model.qrText) lines.push(receiptCenterLine(model.qrText, width));
   if (model.footer) receiptWrapText(model.footer, width).forEach(line => lines.push(receiptCenterLine(line, width)));
-  return lines.filter((line, index, list) => line || list[index - 1]).join("\n");
+  return lines.filter((line, index, list) => line || list[index - 1])
+    .map(line => line ? `${" ".repeat(leftInset)}${line}` : "")
+    .join("\n");
 }
 
 function printReceiptWithNativeBridge(order) {
@@ -8638,11 +8636,14 @@ function printReceiptWithNativeBridge(order) {
   const nativeBridge = window.KasirinNative;
   const printReceipt = androidBridge?.printReceipt || nativeBridge?.printReceipt;
   if (typeof printReceipt !== "function") return false;
+  const bluetooth = state.settings?.printerConnection === "Bluetooth";
+  const receiptModel = receiptPrintModel(order);
   const payload = {
     orderNumber: displayOrderNumber(order?.number || order?.id || "struk"),
-    html: printableReceiptHtml(order),
+    html: bluetooth ? "" : printableReceiptHtml(order),
     text: receiptPlainText(order),
-    receipt: receiptPrintModel(order),
+    logoDataUrl: bluetooth && state.settings?.receiptShowLogo ? state.settings.receiptLogoDataUrl || "" : "",
+    receipt: bluetooth ? { ...receiptModel, logo: { ...receiptModel.logo, dataUrl: "" } } : receiptModel,
     width: state.settings?.receiptWidth || "58mm",
     printerConnection: state.settings?.printerConnection || "Bluetooth",
     printerDevice: state.settings?.printerDevice || "",
@@ -10712,7 +10713,7 @@ function renderSelfOrderTopbar() {
   const table = sessionStorage.getItem("self_order_table") || "A-1";
   const appName = state.settings.selfOrderAppName || state.settings.receiptStoreName || "Kasirin Cafe";
   const outletName = state.settings.selfOrderOutletName || state.outlet || "Outlet Utama";
-  const profileImage = String(state.settings.selfOrderProfileImageDataUrl || state.settings.receiptLogoDataUrl || "").trim();
+  const profileImage = String(state.settings.selfOrderProfileImageDataUrl || "").trim();
   return `
     <header class="self-order-topbar">
       <button type="button" class="self-order-icon-btn ${profileImage ? "has-photo" : ""}" onclick="selfOrderShowMenu()" aria-label="Menu">
@@ -16035,27 +16036,18 @@ async function uploadReceiptLogo(input) {
     receiptLogoUploading = true;
     uploadLabel?.classList.add("uploading");
     previewBox?.classList.add("receipt-uploading");
-    state.settings.receiptLogoDataUrl = localPreview;
+    state.settings.receiptLogoDataUrl = await readReceiptLogoDataUrl(file, localPreview);
     state.settings.receiptShowLogo = true;
-    previewReceiptSettings(input.form);
-    const uploaded = await uploadMediaFileToGas(file, {
-      type: "store_logo",
-      ownerId: "receipt-logo"
-    });
-    state.settings.receiptLogoDataUrl = uploaded.url;
-    state.settings.receiptShowLogo = true;
-    previewReceiptSettings(input.form);
+    const logoToggle = input.form?.querySelector('[name="receiptShowLogo"]');
+    if (logoToggle) logoToggle.checked = true;
     saveState();
-    const synced = await syncStoreSettingsToSupabase({ silent: true });
-    toast(uploaded.local
-      ? "Icon usaha tersimpan lokal."
-      : (synced ? "Icon usaha tersimpan dan tersinkron." : "Icon usaha tersimpan, sync Supabase tertunda."));
+    toast("Icon usaha tersimpan di perangkat ini.");
   } catch (error) {
     console.error(error);
     state.settings.receiptLogoDataUrl = previousLogo;
     state.settings.receiptShowLogo = previousShowLogo;
     render();
-    toast(`Upload icon usaha gagal. ${error.message || "Periksa URL GAS atau izin Web App."}`);
+    toast(`Menyimpan icon usaha gagal. ${error.message || "Periksa ruang penyimpanan perangkat."}`);
   } finally {
     receiptLogoUploading = false;
     URL.revokeObjectURL(localPreview);
@@ -16064,6 +16056,25 @@ async function uploadReceiptLogo(input) {
     input.value = "";
     render();
   }
+}
+
+async function readReceiptLogoDataUrl(file, objectUrl) {
+  const photo = new Image();
+  photo.src = objectUrl;
+  await photo.decode();
+  const ratio = Math.min(1, 512 / Math.max(photo.naturalWidth, photo.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(photo.naturalWidth * ratio));
+  canvas.height = Math.max(1, Math.round(photo.naturalHeight * ratio));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Gambar tidak dapat diproses di perangkat ini.");
+  context.drawImage(photo, 0, 0, canvas.width, canvas.height);
+  const png = canvas.toDataURL("image/png");
+  if (png.length <= 900000) return png;
+  context.globalCompositeOperation = "destination-over";
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.82);
 }
 
 function previewReceiptSettings(target) {

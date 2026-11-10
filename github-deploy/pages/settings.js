@@ -514,7 +514,7 @@ function renderReceiptSettingsTab() {
           ${receiptSwitch("receiptShowLogo", "Tampilkan logo", settings.receiptShowLogo)}
           <div class="receipt-inline-fields">
             <div class="field receipt-logo-upload-field">
-              <label>Icon usaha</label>
+              <label>Icon usaha <small>(hanya perangkat ini)</small></label>
               <label class="receipt-logo-upload ${receiptLogoUploading ? "uploading" : ""}">
                 <span>${settings.receiptLogoDataUrl ? "Ganti icon usaha" : "Upload icon usaha"}</span>
                 <input type="file" accept="image/*" onchange="event.stopPropagation(); uploadReceiptLogo(this)" hidden />
