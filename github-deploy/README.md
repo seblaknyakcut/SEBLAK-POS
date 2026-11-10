@@ -2,7 +2,7 @@
 
 Folder ini berisi file web yang diperlukan untuk menjalankan SEBLAK POS di hosting statis. Tidak perlu proses build.
 
-Pembaruan ini mencakup logo aplikasi baru di `assets/app-logo.png`, logo usaha struk yang tersimpan lokal per perangkat, dan perataan teks struk 58 mm. Setelah mengunggah folder ini, perbarui juga APK ke versi 1.0.4 agar ikon Android dan dukungan cetak gambar struk ikut berubah.
+Pembaruan ini mencakup logo aplikasi baru di `assets/app-logo.png`, logo usaha struk yang tersimpan lokal per perangkat, dan perataan teks struk 58 mm. Setelah mengunggah folder ini, perbarui juga APK ke versi 1.0.5 agar ikon Android dan dukungan cetak gambar struk ikut berubah.
 
 ## Publikasi
 
