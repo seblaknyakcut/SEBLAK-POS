@@ -172,6 +172,7 @@ const initialState = {
   },
   orders: [],
   syncQueue: [],
+  lastDataSentAt: "",
   importedSales: [],
   importedProductSales: [],
   deletedReportKeys: [],
@@ -311,6 +312,7 @@ let localDbDirtyBeforeLoad = false;
 let localDbSaveQueue = Promise.resolve();
 let localDbStatus = "IndexedDB sedang disiapkan";
 let syncQueueProcessing = false;
+let syncQueueTask = null;
 let lastMasterSyncError = null;
 let masterSyncLoading = false;
 let masterSyncLoaded = false;
@@ -406,7 +408,7 @@ function waitForButtonFeedback(ms = 180) {
 seedOrderNotificationKnownKeys(state.orders);
 initializeAppMainHistory();
 syncSelfOrderTableFromUrl();
-loadSupabaseLibraryAsync();
+loadSupabaseLibraryAsync().catch(error => console.warn("Supabase library will retry when online", error));
 
 if (localRealtimeChannel) {
   localRealtimeChannel.onmessage = event => {
@@ -464,9 +466,14 @@ window.addEventListener("resize", () => {
   if (normalizeResponsiveNavState()) render();
 });
 
-window.addEventListener("online", () => {
-  processSyncQueue("online");
-  syncPendingStockMovements("online");
+window.addEventListener("online", async () => {
+  try {
+    await loadSupabaseLibraryAsync();
+    await processSyncQueue("online");
+    await syncPendingStockMovements("online");
+  } catch (error) {
+    console.warn("Online sync will retry", error);
+  }
   loadStoreSettingsFromSupabase({ reason: "online", force: true });
   loadMasterDataFromSupabase({ reason: "online" });
   refreshLimitedStockReservations({ reason: "online", reconcile: true });
@@ -481,13 +488,19 @@ window.addEventListener("offline", () => {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
+  loadSupabaseLibraryAsync()
+    .then(() => processSyncQueue("visible"))
+    .then(() => syncPendingStockMovements("visible"))
+    .catch(error => console.warn("Visible sync will retry", error));
   scheduleNativePushTokenRegistration("visible", { force: true });
   requestLiveOrderRefresh({ reason: "visibility", force: true, silent: true });
 });
 
 setInterval(() => {
-  processSyncQueue("interval");
-  syncPendingStockMovements("interval");
+  loadSupabaseLibraryAsync()
+    .then(() => processSyncQueue("interval"))
+    .then(() => syncPendingStockMovements("interval"))
+    .catch(error => console.warn("Background sync will retry", error));
 }, 60000);
 setInterval(() => pollRealtimeFallback(), EGRESS_SAVER_POLL_INTERVAL_MS);
 setInterval(() => scheduleNativePushTokenRegistration("interval"), 180000);
@@ -746,7 +759,7 @@ function normalizeState() {
   state.settings.selfOrderPromoSlides = normalizeSelfOrderPromoSlides(state.settings.selfOrderPromoSlides, { includeDraft: true });
   state.settings.selfOrderUpsellProductIds = normalizeSelfOrderUpsellProductIds(state.settings.selfOrderUpsellProductIds);
   const deviceLogo = normalizePersistedImageUrl(state.settings.receiptLogoDataUrl);
-  state.settings.receiptLogoDataUrl = /^data:image\/(?:png|jpeg);base64,/i.test(deviceLogo) ? deviceLogo : "";
+  state.settings.receiptLogoDataUrl = /^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(deviceLogo) ? deviceLogo : "";
   if (!state.settings.receiptLogoDataUrl) state.settings.receiptShowLogo = false;
   if (state.settings.databaseMode === "Browser LocalStorage") state.settings.databaseMode = "Browser IndexedDB";
   state.orders ||= [];
@@ -1415,6 +1428,13 @@ function reportMerchantCode() {
   return selected === "all" || merchantByCode(selected)?.active ? selected : "all";
 }
 
+function ordersMerchantCode() {
+  const staff = activeStaff();
+  if (staff?.role === "kasir") return activePosMerchantCode();
+  const selected = sessionStorage.getItem("orders_merchant") || "all";
+  return selected === "all" || merchantByCode(selected)?.active ? selected : "all";
+}
+
 function importMerchantCode() {
   const selected = normalizeMerchantCode(sessionStorage.getItem("import_merchant"));
   const merchant = merchantByCode(selected);
@@ -1437,6 +1457,13 @@ function setReportMerchant(code) {
   render();
 }
 
+function setOrdersMerchant(code) {
+  if (activeRole() === "kasir") return;
+  const next = code === "all" || merchantByCode(code)?.active ? code : "all";
+  sessionStorage.setItem("orders_merchant", next);
+  render();
+}
+
 function orderMatchesMerchant(order, code) {
   return code === "all" || merchantCodeForOrder(order) === code;
 }
@@ -1455,15 +1482,17 @@ function setDashboardMerchant(code) {
 
 function renderMerchantScopeFilter(view, selectedCode) {
   const dashboard = view === "dashboard";
+  const orders = view === "orders";
+  const className = dashboard ? "dashboard" : orders ? "orders" : "report";
   const selectedName = selectedCode === "all" ? "Semua merchant" : (merchantByCode(selectedCode)?.name || "Merchant");
   const options = [{ code: "all", name: "Semua merchant" }, ...state.merchants.filter(merchant => merchant.active && !merchant.deleted)];
-  const selectAction = dashboard ? "setDashboardMerchant" : "setReportMerchant";
+  const selectAction = dashboard ? "setDashboardMerchant" : orders ? "setOrdersMerchant" : "setReportMerchant";
   return `
-    <div class="${dashboard ? "dashboard" : "report"}-merchant-filter merchant-scope-filter">
+    <div class="${className}-merchant-filter merchant-scope-filter">
       <span class="merchant-scope-icon" aria-hidden="true">${navIcon("store")}</span>
       <span class="merchant-scope-label">Merchant</span>
       <details class="merchant-scope-select" onkeydown="handleMerchantScopeKeydown(event)" onfocusout="handleMerchantScopeBlur(event)">
-        <summary id="${dashboard ? "dashboard" : "report"}MerchantSelect" aria-label="Pilih merchant: ${escapeHtml(selectedName)}">
+        <summary id="${className}MerchantSelect" aria-label="Pilih merchant: ${escapeHtml(selectedName)}">
           <span class="merchant-scope-select-face" aria-hidden="true">
             <span class="merchant-scope-indicator"></span>
             <strong>${escapeHtml(selectedName)}</strong>
@@ -1957,6 +1986,7 @@ function loadExternalScriptOnce(id, src, callbacks = {}) {
     }, { once: true });
     script.addEventListener("error", () => {
       delete script.dataset.loading;
+      script.remove();
       callbacks.onerror?.();
       reject(new Error(`Gagal memuat ${src}`));
     }, { once: true });
@@ -1974,6 +2004,7 @@ function loadSupabaseLibraryAsync() {
     initSupabase();
     return Promise.resolve(window.supabase);
   }
+  if (navigator.onLine === false) return Promise.resolve(null);
   return loadExternalScriptOnce("supabase-js-cdn", SUPABASE_JS_CDN, {
     onload: () => window.initSupabaseAfterLibraryLoad?.()
   });
@@ -3630,6 +3661,8 @@ function markOrderSynced(order) {
   order.syncError = "";
   order.syncUpdatedAt = new Date().toISOString();
   state.syncQueue = (state.syncQueue || []).filter(item => !(item.type === "order" && item.orderId === queueId));
+  if (!state.syncQueue.length && !pendingStockMovements().length) state.lastDataSentAt = order.syncUpdatedAt;
+  if (view === "pos") renderPosSyncStatus();
   scheduleKitchenOptimisticOrderMutationClear(order);
 }
 
@@ -4206,6 +4239,11 @@ async function syncPendingStockMovements(reason = "manual") {
   const movements = pendingStockMovements();
   if (!movements.length || !canAttemptSupabaseSync()) return false;
   const synced = await syncStockMovementsToSupabase(movements);
+  if (synced && !(state.syncQueue || []).length && !pendingStockMovements().length) {
+    state.lastDataSentAt = new Date().toISOString();
+    saveState();
+  }
+  if (view === "pos") renderPosSyncStatus();
   if (!synced && reason === "manual") toast("Riwayat audit stok masih menunggu koneksi.");
   return synced;
 }
@@ -4545,44 +4583,57 @@ function syncProductsByIds(productIds) {
 }
 
 async function processSyncQueue(reason = "manual") {
-  if (syncQueueProcessing || !canAttemptSupabaseSync() || !(state.syncQueue || []).length) return;
-  syncQueueProcessing = true;
-  try {
-    const now = Date.now();
-    const isManualRetry = ["manual", "online"].includes(reason);
-    const pendingItems = [...state.syncQueue]
-      .filter(item => ["order", "master"].includes(item.type) && (isManualRetry || !item.nextAttemptAt || new Date(item.nextAttemptAt).getTime() <= now))
-      .slice(0, 20);
-    for (const item of pendingItems) {
-      if (item.type === "order") {
-        const order = state.orders.find(candidate => orderSyncQueueId(candidate) === item.orderId || candidate.number === item.orderNumber);
-        if (!order) {
-          state.syncQueue = state.syncQueue.filter(candidate => candidate.id !== item.id);
-          saveState();
-          continue;
+  if (syncQueueTask) return syncQueueTask;
+  if (!canAttemptSupabaseSync() || !(state.syncQueue || []).length) return;
+  syncQueueTask = (async () => {
+    syncQueueProcessing = true;
+    if (view === "pos") renderPosSyncStatus();
+    const attempted = new Set();
+    const limit = reason === "interval" ? 20 : 1000;
+    try {
+      while (attempted.size < limit && canAttemptSupabaseSync()) {
+        const now = Date.now();
+        const item = (state.syncQueue || []).find(candidate =>
+          ["order", "master"].includes(candidate.type)
+          && !attempted.has(candidate.id)
+          && (reason !== "interval" || !candidate.nextAttemptAt || new Date(candidate.nextAttemptAt).getTime() <= now));
+        if (!item) break;
+        attempted.add(item.id);
+        if (item.type === "order") {
+          const order = state.orders.find(candidate => orderSyncQueueId(candidate) === item.orderId || (item.orderNumber && candidate.number === item.orderNumber));
+          if (!order) {
+            state.syncQueue = state.syncQueue.filter(candidate => candidate.id !== item.id);
+            saveState();
+          } else {
+            await syncOrderToSupabase(order, { fromQueue: true, silent: true });
+          }
+        } else {
+          try {
+            await syncMasterQueueItem(item);
+            markMasterSynced(item);
+            saveState();
+          } catch (error) {
+            console.error("Supabase master queue sync failed", item.entity, error);
+            markMasterSyncPending(item.entity, item.payload, item.operation, {
+              userInitiated: item.userInitiated === true,
+              allowDeletedProductUpsert: item.allowDeletedProductUpsert === true
+            }, error);
+            saveState();
+          }
         }
-        await syncOrderToSupabase(order, { fromQueue: true, silent: true });
-        continue;
+        if (view === "pos") renderPosSyncStatus();
       }
-      if (item.type === "master") {
-        try {
-          await syncMasterQueueItem(item);
-          markMasterSynced(item);
-          saveState();
-        } catch (error) {
-          console.error("Supabase master queue sync failed", item.entity, error);
-          markMasterSyncPending(item.entity, item.payload, item.operation, {
-            userInitiated: item.userInitiated === true,
-            allowDeletedProductUpsert: item.allowDeletedProductUpsert === true
-          }, error);
-          saveState();
-        }
+      if (attempted.size && !(state.syncQueue || []).length && !pendingStockMovements().length) {
+        state.lastDataSentAt = new Date().toISOString();
+        saveState();
       }
+    } finally {
+      syncQueueProcessing = false;
+      if (view === "pos") renderPosSyncStatus();
     }
-    if (reason !== "interval" && !(state.syncQueue || []).length) render();
-  } finally {
-    syncQueueProcessing = false;
-  }
+  })();
+  try { return await syncQueueTask; }
+  finally { syncQueueTask = null; }
 }
 
 async function retryQueuedOrderSync() {
@@ -4597,6 +4648,76 @@ async function retryQueuedOrderSync() {
     toast("Semua pesanan antrean berhasil dikirim.", 3600);
   } else {
     render();
+  }
+}
+
+function posPendingSyncCount() {
+  return (state.syncQueue || []).length + pendingStockMovements().length;
+}
+
+function posSyncStatusText() {
+  const pending = posPendingSyncCount();
+  if (syncQueueProcessing || dataRefreshLoading) return "Menyinkronkan";
+  if (pending || !state.lastDataSentAt) return "Butuh sinkronisasi";
+  return "Tersinkronisasi";
+}
+
+function renderPosSyncStatus() {
+  const button = document.getElementById("posSyncButton");
+  if (!button) return;
+  const pending = posPendingSyncCount();
+  const status = posSyncStatusText();
+  const label = button.querySelector("#posSyncStatus");
+  if (label) label.textContent = status;
+  button.classList.toggle("has-queue", pending > 0);
+  button.classList.toggle("needs-sync", status === "Butuh sinkronisasi");
+  button.classList.toggle("is-synced", status === "Tersinkronisasi");
+  button.classList.toggle("loading", syncQueueProcessing || dataRefreshLoading);
+  button.title = `${status}. Tekan untuk menyinkronkan data.`;
+  button.setAttribute("aria-label", button.title);
+  let badge = button.querySelector(".pos-sync-queue-badge");
+  if (pending && !badge) {
+    badge = document.createElement("span");
+    badge.className = "pos-sync-queue-badge";
+    button.appendChild(badge);
+  }
+  if (badge) {
+    if (pending) badge.textContent = String(pending);
+    else badge.remove();
+  }
+}
+
+async function refreshPosData() {
+  if (dataRefreshLoading) return;
+  dataRefreshLoading = true;
+  renderPosSyncStatus();
+  try {
+    if (navigator.onLine === false) {
+      toast(offlineOrderSyncMessage(), 3600);
+      return;
+    }
+    await loadSupabaseLibraryAsync();
+    if (!canAttemptSupabaseSync()) {
+      toast("Koneksi database belum siap. Data tetap tersimpan di perangkat.", 4200);
+      return;
+    }
+    await processSyncQueue("pos-refresh");
+    await syncPendingStockMovements("pos-refresh");
+    if (posPendingSyncCount()) {
+      const stockProblem = (state.syncQueue || []).find(item => String(item.lastError || "").includes("Stok online tidak cukup"));
+      toast(stockProblem ? stockProblem.lastError : `${posPendingSyncCount()} data masih menunggu dikirim. Coba lagi saat koneksi stabil.`, 5000);
+      return;
+    }
+    state.lastDataSentAt = new Date().toISOString();
+    saveState();
+    await loadMasterDataFromSupabase({ reason: "pos-refresh", force: true, silent: true });
+    toast("Data terkirim", 3000);
+  } catch (error) {
+    console.warn("POS refresh failed", error);
+    toast("Belum berhasil mengirim data. Data tersimpan di perangkat.", 4200);
+  } finally {
+    dataRefreshLoading = false;
+    renderPosSyncStatus();
   }
 }
 
@@ -4688,6 +4809,9 @@ async function syncOrderToSupabase(order, options = {}) {
     }
     if (orderMerchantCode !== DEFAULT_MERCHANT_CODE && (!merchant.remoteId || !supabaseSupportsMerchantId)) {
       throw new Error("Kolom merchant_id belum tersedia untuk sinkronisasi merchant ini.");
+    }
+    if ((order.items || []).some(item => item.offlineStockPending === true)) {
+      await syncOfflineOrderStock(order);
     }
     const orderPayload = {
       ...(merchant.remoteId && supabaseSupportsMerchantId ? { merchant_id: merchant.remoteId } : {}),
@@ -4837,6 +4961,50 @@ async function syncOrderToSupabase(order, options = {}) {
         : offlineOrderSyncMessage(), 4800);
     }
     return false;
+  }
+}
+
+async function syncOfflineOrderStock(order) {
+  const stockItems = (order.items || []).filter(item => item.offlineStockPending === true);
+  if (!stockItems.length) return;
+  const totals = new Map();
+  for (const item of stockItems) {
+    const variantKey = item.stockVariantKey || cartItemVariantKey(item);
+    const key = `${item.productId}|||${variantKey}`;
+    const entry = totals.get(key) || { productId: item.productId, variantKey, qty: 0 };
+    entry.qty += Math.max(0, Number(item.qty || 0));
+    totals.set(key, entry);
+  }
+  const token = `offline-${order.id || order.number}`;
+  try {
+    for (const entry of totals.values()) {
+      const { data, error } = await supabaseClient.rpc("reserve_limited_stock", {
+        p_cart_token: token,
+        p_product_local_id: entry.productId,
+        p_variant_key: entry.variantKey,
+        p_qty: entry.qty,
+        p_source: "POS",
+        p_ttl_seconds: 3600
+      });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      if (result?.accepted !== true) throw new Error(`Stok online tidak cukup untuk ${order.number}. Periksa selisih stok merchant.`);
+    }
+    const { data, error } = await supabaseClient.rpc("commit_limited_stock_reservations", {
+      p_cart_token: token,
+      p_order_number: order.number,
+      p_source: "POS"
+    });
+    if (error) throw error;
+    const result = Array.isArray(data) ? data[0] : data;
+    if (result?.accepted !== true) throw new Error(`Stok online tidak cukup untuk ${order.number}. Periksa selisih stok merchant.`);
+    stockItems.forEach(item => { delete item.offlineStockPending; });
+    order.limitedStockCommitToken = token;
+    saveState();
+  } catch (error) {
+    try { await supabaseClient.rpc("release_limited_stock_reservations", { p_cart_token: token }); }
+    catch (releaseError) { console.warn("Offline stock reservation release failed", releaseError); }
+    throw error;
   }
 }
 
@@ -5128,13 +5296,7 @@ async function migrateLocalDatabaseToSupabase(event) {
 }
 
 function clearLocalMasterDataForRemoteAuthority(options = {}) {
-  if (!supabaseReadable()) return;
-  if (view === "selforder" && !masterSyncLoaded && (state.products || []).length) return;
-  state.products = [];
-  state.addons = [];
-  state.categories = [];
-  normalizeState();
-  if (options.save !== false) saveState();
+  // Keep the last complete catalog for offline sales. Successful remote loads replace it.
 }
 
 function staffSyncPayload() {
@@ -5489,7 +5651,7 @@ async function selectStoreSettingsRow() {
 }
 
 async function loadStoreSettingsFromSupabase(options = {}) {
-  if (!supabaseReadable() || storeSettingsLoading || !localDbReady) return;
+  if (!supabaseReadable() || navigator.onLine === false || storeSettingsLoading || !localDbReady) return;
   const freshEnough = Date.now() - storeSettingsLoadedAt < 60000;
   if (!options.force && freshEnough) return;
   storeSettingsLoading = true;
@@ -5584,7 +5746,8 @@ function shouldLoadStockMovementsWithMaster(options = {}) {
 }
 
 async function loadMasterDataFromSupabase(options = {}) {
-  if (!masterDataReadable() || masterSyncLoading || !localDbReady) return;
+  if (!masterDataReadable() || navigator.onLine === false || masterSyncLoading || !localDbReady) return;
+  if ((state.syncQueue || []).some(item => item.type === "master")) return;
   const freshEnough = Date.now() - masterSyncLoadedAt < EGRESS_SAVER_MASTER_CACHE_MS;
   if (!options.force && masterSyncLoaded && freshEnough) return;
   let shouldRenderMasterLoadFallback = false;
@@ -5712,7 +5875,7 @@ function liveOrderSyncSince(options = {}) {
 }
 
 async function loadRecentOrdersFromSupabase(options = {}) {
-  if (!supabaseReadable() || realtimeOrdersLoading) return;
+  if (!supabaseReadable() || navigator.onLine === false || realtimeOrdersLoading) return;
   if (!localDbReady) {
     pendingLiveOrderRefreshAfterLocalDbReady = {
       reason: options.reason || "orders-refresh",
@@ -7784,11 +7947,13 @@ function pageTitle() {
 
 function topActions() {
   if (view === "pos") {
-    const syncQueueCount = queuedOrderSyncCount();
+    const syncQueueCount = posPendingSyncCount();
+    const syncStatus = posSyncStatusText();
     return `
     <button class="pos-tool-btn danger" onclick="clearCart()" title="Batalkan pesanan">&times;</button>
-    <button class="pos-tool-btn pos-sync-queue-btn ${syncQueueCount ? "has-queue" : ""} ${syncQueueProcessing ? "loading" : ""}" onclick="retryQueuedOrderSync()" title="Sync pesanan antrean" aria-label="Sync pesanan antrean">
+    <button id="posSyncButton" class="pos-tool-btn pos-sync-queue-btn ${syncQueueCount ? "has-queue" : ""} ${syncStatus === "Butuh sinkronisasi" ? "needs-sync" : ""} ${syncStatus === "Tersinkronisasi" ? "is-synced" : ""} ${syncQueueProcessing || dataRefreshLoading ? "loading" : ""}" onclick="refreshPosData()" title="${syncStatus}. Tekan untuk menyinkronkan data." aria-label="${syncStatus}. Tekan untuk menyinkronkan data.">
       ${navIcon("sync")}
+      <span id="posSyncStatus" class="pos-sync-status-label" aria-live="polite">${syncStatus}</span>
       ${syncQueueCount ? `<span class="pos-sync-queue-badge">${syncQueueCount}</span>` : ""}
     </button>
     <button class="pos-tool-btn unpaid-count" onclick="openHeldOrders()" title="Pesanan belum bayar">${unpaidOrders().length}</button>
@@ -8637,12 +8802,17 @@ function printReceiptWithNativeBridge(order) {
   const printReceipt = androidBridge?.printReceipt || nativeBridge?.printReceipt;
   if (typeof printReceipt !== "function") return false;
   const bluetooth = state.settings?.printerConnection === "Bluetooth";
+  const localLogo = bluetooth && state.settings?.receiptShowLogo ? state.settings.receiptLogoDataUrl || "" : "";
+  if (localLogo.length > 450000) {
+    toast("Logo struk terlalu besar. Unggah ulang logo agar otomatis diperkecil sebelum dicetak.", 6000);
+    return "blocked";
+  }
   const receiptModel = receiptPrintModel(order);
   const payload = {
     orderNumber: displayOrderNumber(order?.number || order?.id || "struk"),
     html: bluetooth ? "" : printableReceiptHtml(order),
     text: receiptPlainText(order),
-    logoDataUrl: bluetooth && state.settings?.receiptShowLogo ? state.settings.receiptLogoDataUrl || "" : "",
+    logoDataUrl: localLogo,
     receipt: bluetooth ? { ...receiptModel, logo: { ...receiptModel.logo, dataUrl: "" } } : receiptModel,
     width: state.settings?.receiptWidth || "58mm",
     printerConnection: state.settings?.printerConnection || "Bluetooth",
@@ -8661,7 +8831,9 @@ function printReceiptWithNativeBridge(order) {
 
 function printReceiptOrder(order) {
   if (!order) return toast("Belum ada struk untuk dicetak.");
-  if (printReceiptWithNativeBridge(order)) {
+  const nativeResult = printReceiptWithNativeBridge(order);
+  if (nativeResult === "blocked") return;
+  if (nativeResult) {
     toast("Menyiapkan struk untuk dicetak...");
     return;
   }
@@ -8956,6 +9128,9 @@ async function refreshLimitedStockReservations(options = {}) {
 async function reserveLimitedStockQty(product, variantKey = "", desiredQty = 0, source = limitedStockSource()) {
   const physical = productPhysicalStockLimit(product, variantKey);
   if (!Number.isFinite(physical)) return { accepted: true, available: Infinity, reserved: 0, reason: "not_limited" };
+  if (source === "POS" && !canAttemptSupabaseSync()) {
+    return { accepted: desiredQty <= physical, available: physical, reserved: desiredQty, reason: "offline" };
+  }
   if (navigator.onLine === false) return { accepted: false, available: 0, reserved: 0, reason: "offline" };
   if (!supabaseWritable()) return { accepted: false, available: 0, reserved: 0, reason: "service_unavailable" };
   const key = limitedStockReservationKey(product.id, variantKey);
@@ -9055,6 +9230,19 @@ async function releaseLimitedStockReservations(source = limitedStockSource(), op
 
 async function commitLimitedStockReservations(items, orderNumber, source = limitedStockSource()) {
   if (!limitedStockItemTotals(items).size) return { accepted: true, reason: "no_limited_stock", token: "" };
+  if (source === "POS" && !canAttemptSupabaseSync()) {
+    const validation = validateLimitedStockItems(items);
+    if (!validation.ok) return { accepted: false, reason: "stock_changed", ...validation };
+    items.forEach(item => {
+      const product = state.products.find(candidate => candidate.id === item.productId);
+      const variantKey = cartItemVariantKey(item);
+      if (!limitedStockRequiresOnline(product, variantKey)) return;
+      item.stockTracked = true;
+      item.stockVariantKey = variantKey;
+      item.offlineStockPending = true;
+    });
+    return { accepted: true, reason: "offline", token: "" };
+  }
   const ensured = await ensureLimitedStockCartReservations(items, source);
   if (!ensured.ok) return { accepted: false, ...ensured };
   const token = limitedStockReservationToken(source);
@@ -9124,6 +9312,7 @@ function scheduleLimitedStockReservationRenewal() {
 function productSaleStockLimit(product, variantKey = "") {
   const physical = productPhysicalStockLimit(product, variantKey);
   if (!Number.isFinite(physical)) return Infinity;
+  if (navigator.onLine === false) return physical;
   const reservation = limitedStockReservationEntry(product, variantKey);
   const reservedByOthers = Math.max(0, Number(reservation.total || 0) - Number(reservation.own || 0));
   return Math.max(0, physical - reservedByOthers);
@@ -11842,7 +12031,6 @@ async function addToCart(id) {
   const existing = cart.find(item => item.productId === id && !cartItemLockedFromUnpaid(item));
   const qty = existing && !hasVariants ? existing.qty + 1 : 1;
   if (limitedStockCartQty(cart, id) + 1 > productSaleStockLimit(product)) return toast(limitedStockMessage(product, "", productSaleStockLimit(product)));
-  if (limitedStockRequiresOnline(product) && !canAttemptSupabaseSync()) return toast(limitedStockServiceMessage(navigator.onLine === false ? "offline" : "service_unavailable"));
   if (limitedStockPendingKeys.has(limitedStockReservationKey(product.id))) return;
   const previousCart = cart.map(item => ({ ...item }));
   if (existing && !hasVariants) existing.qty = qty;
@@ -12001,10 +12189,6 @@ async function addVariantToCart(event, id) {
   const variantKey = selfOrderVariantKey(product, [...selected].reverse()[0] || {});
   if (limitedStockCartQty(cart, id, variantKey) + 1 > productSaleStockLimit(product, variantKey)) {
     toast(limitedStockMessage(product, variantKey, productSaleStockLimit(product, variantKey)));
-    return false;
-  }
-  if (limitedStockRequiresOnline(product, variantKey) && !canAttemptSupabaseSync()) {
-    toast(limitedStockServiceMessage(navigator.onLine === false ? "offline" : "service_unavailable"));
     return false;
   }
   if (limitedStockPendingKeys.has(limitedStockReservationKey(product.id, variantKey))) return false;
@@ -12181,7 +12365,6 @@ async function setCartQty(id, qty) {
   const product = state.products.find(item => item.id === cartLine?.productId);
   const variantKey = cartItemVariantKey(cartLine);
   const increasing = qty > Number(cartLine?.qty || 0);
-  if (increasing && limitedStockRequiresOnline(product, variantKey) && !canAttemptSupabaseSync()) return toast(limitedStockServiceMessage(navigator.onLine === false ? "offline" : "service_unavailable"));
   if (increasing && limitedStockPendingKeys.has(limitedStockReservationKey(product?.id, variantKey))) return;
   const previousCart = cart.map(item => ({ ...item }));
   if (qty <= 0) cart = cart.filter(item => cartItemKey(item) !== id);
@@ -13760,6 +13943,7 @@ function chooseOrdersCalendarDate(key) {
 
 function renderOrders() {
   const dateRange = ordersDateRange();
+  const merchantCode = ordersMerchantCode();
   const quickFilter = sessionStorage.getItem("orders_quick_filter") || "Semua";
   const query = sessionStorage.getItem("orders_query") || "";
   requestReportOrderSummary(dateRange);
@@ -13769,14 +13953,14 @@ function renderOrders() {
     ["Bungkus", "Take Away"],
     ["Batal", "Dibatalkan"]
   ];
-  const periodOrders = state.orders.filter(order => orderVisibleToActiveStaff(order) && orderInOrdersRange(order, dateRange));
+  const periodOrders = state.orders.filter(order => orderVisibleToActiveStaff(order) && orderMatchesMerchant(order, merchantCode) && orderInOrdersRange(order, dateRange));
   const posOrders = periodOrders.filter(orderVisibleInPosOrderList);
   const newOrders = posOrders.filter(order => order.status === "Pesanan Baru");
   const processOrders = posOrders.filter(order => order.status === "Sedang Disiapkan");
   const doneOrders = posOrders.filter(order => order.status === "Selesai");
   const unpaid = posOrders.filter(order => order.paymentStatus !== "Lunas" && order.status !== "Dibatalkan");
-  const orderSummary = reportOrderSummary(dateRange, activeRole() === "kasir" ? activePosMerchantCode() : "all");
-  const reportOnlyOrders = reportOnlyCompletedOrders(dateRange, posOrders, activeRole() === "kasir" ? activePosMerchantCode() : "all");
+  const orderSummary = reportOrderSummary(dateRange, merchantCode);
+  const reportOnlyOrders = reportOnlyCompletedOrders(dateRange, posOrders, merchantCode);
   const filtered = posOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
   const filteredReportOrders = reportOnlyOrders.filter(order => orderMatchesQuickFilter(order, quickFilter));
   const ordered = [...filtered, ...filteredReportOrders].sort(ordersEntryStableSort);
@@ -13792,6 +13976,7 @@ function renderOrders() {
   ];
   return `
     <section class="orders-page">
+      ${activeRole() !== "kasir" ? renderMerchantScopeFilter("orders", merchantCode) : ""}
       <div class="orders-toolbar-row">
         <div class="orders-control-card">
           <div class="orders-date-filter">
@@ -16027,6 +16212,7 @@ async function uploadReceiptLogo(input) {
   const file = input?.files?.[0];
   if (!file) return;
   if (!file.type.startsWith("image/")) return toast("Pilih file gambar untuk logo usaha.");
+  if (file.size > 8 * 1024 * 1024) return toast("Logo terlalu besar. Pilih gambar di bawah 8 MB.");
   const uploadLabel = input.closest(".receipt-logo-upload");
   const previewBox = input.closest("form")?.querySelector(".receipt-preview-box");
   const localPreview = URL.createObjectURL(file);
@@ -16062,7 +16248,7 @@ async function readReceiptLogoDataUrl(file, objectUrl) {
   const photo = new Image();
   photo.src = objectUrl;
   await photo.decode();
-  const ratio = Math.min(1, 512 / Math.max(photo.naturalWidth, photo.naturalHeight));
+  const ratio = Math.min(1, 384 / Math.max(photo.naturalWidth, photo.naturalHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(photo.naturalWidth * ratio));
   canvas.height = Math.max(1, Math.round(photo.naturalHeight * ratio));
@@ -16070,11 +16256,13 @@ async function readReceiptLogoDataUrl(file, objectUrl) {
   if (!context) throw new Error("Gambar tidak dapat diproses di perangkat ini.");
   context.drawImage(photo, 0, 0, canvas.width, canvas.height);
   const png = canvas.toDataURL("image/png");
-  if (png.length <= 900000) return png;
+  if (png.length <= 450000) return png;
   context.globalCompositeOperation = "destination-over";
   context.fillStyle = "#fff";
   context.fillRect(0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.82);
+  const jpeg = canvas.toDataURL("image/jpeg", 0.76);
+  if (jpeg.length > 450000) throw new Error("Logo terlalu kompleks. Coba gambar yang lebih sederhana.");
+  return jpeg;
 }
 
 function previewReceiptSettings(target) {

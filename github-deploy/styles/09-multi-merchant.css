@@ -1,5 +1,6 @@
 .view-dashboard .dashboard-merchant-filter,
-.view-reports .report-merchant-filter {
+.view-reports .report-merchant-filter,
+.view-orders .orders-merchant-filter {
   width: min(100%, 920px);
   margin: 0 auto 10px;
   display: grid;
@@ -18,6 +19,11 @@
 
 .view-dashboard .dashboard-merchant-filter {
   width: var(--dashboard-stack-width, min(100%, 920px));
+}
+
+.view-orders .orders-merchant-filter {
+  width: 100%;
+  margin-bottom: 0;
 }
 
 .merchant-scope-icon {
@@ -300,12 +306,14 @@
   }
 
   .view-dashboard .dashboard-merchant-filter,
-  .view-reports .report-merchant-filter {
+  .view-reports .report-merchant-filter,
+  .view-orders .orders-merchant-filter {
     grid-template-columns: 32px minmax(0, 1fr) minmax(140px, 56%);
     gap: 8px;
   }
 
-  .view-reports .report-merchant-filter {
+  .view-reports .report-merchant-filter,
+  .view-orders .orders-merchant-filter {
     width: 100%;
   }
 

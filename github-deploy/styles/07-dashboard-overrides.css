@@ -65,6 +65,8 @@
   .top-sync-btn { width: 36px; height: 36px; border-radius: 12px; box-shadow: none; }
   .top-sync-btn svg { width: 18px; height: 18px; }
   .pos-tool-btn { width: 34px; height: 34px; border-radius: 999px; box-shadow: none; }
+  .pos-mode .toolbar .pos-sync-queue-btn { width: 78px; height: 48px; border-radius: 14px; }
+  .pos-mode .topbar { min-height: 64px; }
   .pos-tool-btn::before, .brand-menu::before { width: 18px; height: 18px; }
   .pos-tool-btn:nth-child(3) { font-size: 12px; }
   .page { padding: 12px; }
@@ -4085,4 +4087,10 @@
   .visitor-receipt-item small {
     font-size: 10px;
   }
+}
+
+@media (max-width: 360px) {
+  .pos-mode .toolbar .pos-sync-queue-btn { width: 70px; }
+  .pos-sync-status-label { font-size: 8px; }
+  .pos-mode .topbar h2 { font-size: 16px; }
 }
