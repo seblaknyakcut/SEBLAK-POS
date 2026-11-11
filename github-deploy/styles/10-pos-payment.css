@@ -1,0 +1,42 @@
+/* Preserve the desktop grid while grouping the form on narrow screens. */
+.payment-form-body {
+  display: contents;
+}
+
+@media (max-width: 760px) {
+  .pos-layout.cart-view .cart-payment-page {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 8px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .pos-layout.cart-view .payment-form-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 4px;
+  }
+
+  .pos-layout.cart-view .payment-detail-shell,
+  .pos-layout.cart-view .payment-panel {
+    flex: 0 0 auto;
+    align-self: stretch;
+    height: auto;
+  }
+
+  .pos-layout.cart-view .payment-detail-fields {
+    align-content: start;
+    grid-auto-rows: max-content;
+  }
+
+  .pos-layout.cart-view .final-action-grid {
+    grid-column: 1;
+    grid-row: 2;
+    align-self: end;
+  }
+}

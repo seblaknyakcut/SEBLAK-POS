@@ -2,7 +2,7 @@
 
 Folder ini berisi file web yang diperlukan untuk menjalankan SEBLAK POS di hosting statis. Tidak perlu proses build.
 
-Pembaruan ini mencakup pemilih merchant pada halaman Pesanan, Penjualan offline dengan antrean sinkronisasi otomatis, status **Butuh sinkronisasi** atau **Tersinkronisasi** di tombol refresh, dan pemrosesan logo struk yang lebih aman. APK versi 1.1.2 sudah menyertakan halaman web ini di dalam paket. Jika aplikasi juga dipakai lewat browser biasa, unggah isi folder ini ke hosting agar browser memakai versi yang sama.
+Pembaruan ini mencakup perbaikan lebar dua panel Penjualan pada tablet, Pembayaran pada layar sempit, pemilih merchant di Pesanan khusus owner/admin, pengaturan Printer dan Struk per perangkat, serta sinkronisasi Penjualan otomatis. APK versi 1.1.7 menyertakan halaman web ini di dalam paket. Jika aplikasi juga dipakai lewat browser biasa, unggah isi folder ini ke hosting agar browser memakai versi yang sama. APK yang sudah terpasang memuat halaman dari paketnya sendiri; perubahan situs tidak mengganti layout APK lama.
 
 ## Publikasi
 

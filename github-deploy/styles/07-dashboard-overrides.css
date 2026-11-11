@@ -4094,3 +4094,23 @@
   .pos-sync-status-label { font-size: 8px; }
   .pos-mode .topbar h2 { font-size: 16px; }
 }
+
+.cash-drawer-settings {
+  display: grid;
+  gap: 10px;
+  padding: 15px;
+  border: 1px solid #c8e5d8;
+  border-radius: 16px;
+  background: #f5fdf9;
+}
+
+.cash-drawer-heading { display: grid; gap: 3px; }
+.cash-drawer-heading strong { color: #0b6f56; font-size: 15px; }
+.cash-drawer-heading span { color: #64748b; font-size: 12px; line-height: 1.4; }
+.cash-drawer-controls { align-items: end; }
+.cash-drawer-controls .btn { min-height: 43px; white-space: nowrap; }
+
+@media (max-width: 500px) {
+  .cash-drawer-controls { grid-template-columns: minmax(0, 1fr); }
+  .cash-drawer-controls .btn { width: 100%; }
+}

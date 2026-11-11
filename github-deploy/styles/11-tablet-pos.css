@@ -1,0 +1,137 @@
+/* Tablet portrait keeps the item -> cart -> payment flow. The orientation marker
+   is based on the device, so an open keyboard cannot switch the POS to landscape. */
+@media (min-width: 761px) and (max-width: 1180px) {
+  html.pos-device-portrait .app-shell.pos-mode .page {
+    padding-inline: 12px;
+    height: 100% !important;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  html.pos-device-portrait .pos-layout,
+  html.pos-device-portrait .app-shell.nav-open .pos-layout,
+  html.pos-device-portrait .app-shell.nav-open.nav-collapsed .pos-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    max-width: 760px !important;
+    margin-inline: auto !important;
+    gap: 0 !important;
+    min-height: 0;
+  }
+
+  html.pos-device-portrait .pos-layout.items-view .pos-products-pane,
+  html.pos-device-portrait .pos-layout.cart-view .cart-panel {
+    display: flex !important;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  html.pos-device-portrait .pos-layout.items-view .cart-panel,
+  html.pos-device-portrait .pos-layout.cart-view .pos-products-pane {
+    display: none !important;
+  }
+
+  html.pos-device-portrait .pos-layout.items-view .pos-products-pane {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+    padding-bottom: 66px;
+  }
+
+  html.pos-device-portrait .pos-layout.cart-view .cart-back {
+    display: block;
+    flex: 0 0 auto;
+    text-align: left;
+  }
+
+  html.pos-device-portrait .pos-layout .cart-header-line {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 8px;
+  }
+
+  html.pos-device-portrait .pos-layout .cart-step-tabs,
+  html.pos-device-portrait .pos-layout .cart-title-mini {
+    grid-row: 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  html.pos-device-portrait .pos-layout .cart-step-tabs { grid-column: 1; }
+  html.pos-device-portrait .pos-layout .cart-title-mini { grid-column: 2; }
+  html.pos-device-portrait .pos-layout .cart-title-mini strong { width: 100%; min-width: 0; }
+
+  html.pos-device-portrait .pos-layout.items-view + .mobile-pos-bar {
+    display: grid;
+    position: fixed;
+    left: 104px;
+    right: 16px;
+    bottom: 12px;
+    max-width: 760px;
+    margin-inline: auto;
+    z-index: 30;
+  }
+
+  html.pos-device-portrait .pos-layout.cart-view + .mobile-pos-bar { display: none; }
+
+  html.pos-device-portrait .mobile-pos-main {
+    width: 100%;
+    min-height: 48px;
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    padding: 0 16px;
+    border-radius: 999px;
+    color: #fff;
+    background: #2f9b76;
+    text-transform: uppercase;
+  }
+
+  html.pos-device-portrait .mobile-pos-main strong { font-size: 26px; line-height: 1; }
+  html.pos-device-portrait .mobile-pos-main span { font-size: 13px; font-weight: 800; text-transform: none; }
+  html.pos-device-portrait .mobile-pos-main b { justify-self: end; font-size: 13px; font-weight: 900; }
+
+  /* When the keyboard reduces height, only the payment form scrolls. */
+  html.pos-device-portrait .pos-layout.cart-view .cart-payment-page {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) auto !important;
+    gap: 8px;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  html.pos-device-portrait .pos-layout.cart-view .payment-form-body {
+    display: flex !important;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding-bottom: 4px;
+  }
+
+  html.pos-device-portrait .pos-layout.cart-view .payment-detail-shell,
+  html.pos-device-portrait .pos-layout.cart-view .payment-panel {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    flex: 0 0 auto;
+    align-self: stretch;
+    height: auto !important;
+  }
+
+  html.pos-device-portrait .pos-layout.cart-view .payment-detail-fields {
+    align-content: start;
+    grid-auto-rows: max-content;
+  }
+
+  html.pos-device-portrait .pos-layout.cart-view .final-action-grid {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+    align-self: end;
+  }
+}

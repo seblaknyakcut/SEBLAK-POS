@@ -168,7 +168,9 @@ const initialState = {
     orderNotificationReminderSeconds: 180,
     printerConnection: "Bluetooth",
     printerDevice: "",
-    printerDeviceId: ""
+    printerDeviceId: "",
+    cashDrawerEnabled: false,
+    cashDrawerPin: 0
   },
   orders: [],
   syncQueue: [],
@@ -233,7 +235,6 @@ let stockAvailabilitySyncLoading = false;
 let databaseMigrationLoading = false;
 let databaseMigrationStatus = "";
 let receiptLogoUploading = false;
-let receiptSettingsSaving = false;
 let selfOrderSettingsSaving = false;
 let selfOrderUploadStatuses = {};
 const SELF_ORDER_PROMO_INTERVAL_MS = 7000;
@@ -1311,8 +1312,22 @@ function pushPosMobileCartHistoryState() {
 function isPosMobileLayout() {
   return typeof window !== "undefined"
     && typeof window.matchMedia === "function"
-    && window.matchMedia("(max-width: 760px)").matches;
+    && (window.matchMedia("(max-width: 760px)").matches
+      || (window.matchMedia("(max-width: 1180px)").matches
+        && document.documentElement.classList.contains("pos-device-portrait")));
 }
+
+function syncPosDeviceOrientation() {
+  const orientation = window.screen?.orientation?.type || "";
+  const isPortrait = orientation
+    ? orientation.startsWith("portrait")
+    : window.screen.height >= window.screen.width;
+  document.documentElement.classList.toggle("pos-device-portrait", isPortrait);
+}
+
+syncPosDeviceOrientation();
+window.screen?.orientation?.addEventListener?.("change", syncPosDeviceOrientation);
+window.addEventListener("orientationchange", syncPosDeviceOrientation);
 
 function syncSelfOrderTableFromUrl() {
   const tableCode = selfOrderTableCodeFromUrl();
@@ -5508,31 +5523,11 @@ function normalizeStoreSettingsRow(row) {
   const selfOrderSettings = row.self_order_settings && typeof row.self_order_settings === "object"
     ? row.self_order_settings
     : {};
-  const receiptSettings = selfOrderSettings.receipt && typeof selfOrderSettings.receipt === "object"
-    ? selfOrderSettings.receipt
-    : {};
   const generalSettings = selfOrderSettings.general && typeof selfOrderSettings.general === "object"
     ? selfOrderSettings.general
     : {};
   return {
-    receiptStoreName: row.receipt_store_name || receiptSettings.storeName || row.store_name || "",
-    receiptAddress: row.store_address ?? receiptSettings.address ?? state.settings.receiptAddress ?? "",
-    receiptPhone: row.store_phone ?? receiptSettings.phone ?? state.settings.receiptPhone ?? "",
-    receiptFooter: row.receipt_footer ?? receiptSettings.footer ?? state.settings.receiptFooter ?? "",
-    receiptWidth: row.receipt_width || receiptSettings.width || state.settings.receiptWidth || "58mm",
-    // Logo struk dan pilihan cetak gambarnya khusus perangkat ini.
-    receiptBottomFeedLines: Number.isFinite(Number(receiptSettings.bottomFeedLines))
-      ? Math.max(0, Math.min(8, Number(receiptSettings.bottomFeedLines)))
-      : Number(state.settings.receiptBottomFeedLines || 1),
-    receiptShowReceiptCode: "showReceiptCode" in receiptSettings ? receiptSettings.showReceiptCode === true : state.settings.receiptShowReceiptCode,
-    receiptShowOrderQueueNumber: "showOrderQueueNumber" in receiptSettings ? receiptSettings.showOrderQueueNumber === true : state.settings.receiptShowOrderQueueNumber,
-    receiptShowUnitNextToQty: "showUnitNextToQty" in receiptSettings ? receiptSettings.showUnitNextToQty === true : state.settings.receiptShowUnitNextToQty,
-    receiptShowReceiptNumber: "showReceiptNumber" in receiptSettings ? receiptSettings.showReceiptNumber === true : state.settings.receiptShowReceiptNumber,
-    receiptShowTotalQuantity: "showTotalQuantity" in receiptSettings ? receiptSettings.showTotalQuantity === true : state.settings.receiptShowTotalQuantity,
-    receiptShowCashierLabel: "showCashierLabel" in receiptSettings ? receiptSettings.showCashierLabel === true : state.settings.receiptShowCashierLabel,
-    receiptHeaderNote: receiptSettings.headerNote || state.settings.receiptHeaderNote || "",
-    receiptShowTable: typeof row.receipt_show_table === "boolean" ? row.receipt_show_table : receiptSettings.showTable !== false,
-    receiptShowQr: typeof row.receipt_show_qr === "boolean" ? row.receipt_show_qr : receiptSettings.showQr === true,
+    // Printer dan seluruh isi struk milik perangkat, bukan pengaturan bersama Supabase.
     databaseMode: row.database_mode || generalSettings.databaseMode || state.settings.databaseMode,
     syncEndpoint: row.sync_endpoint ?? generalSettings.syncEndpoint ?? state.settings.syncEndpoint,
     autoBackup: typeof row.auto_backup === "boolean" ? row.auto_backup : generalSettings.autoBackup !== false,
@@ -5554,9 +5549,6 @@ function normalizeStoreSettingsRow(row) {
     orderNotificationReminderSeconds: Number.isFinite(Number(selfOrderSettings.notifications?.reminderIntervalSeconds))
       ? Math.max(10, Math.min(3600, Number(selfOrderSettings.notifications.reminderIntervalSeconds)))
       : 180,
-    printerConnection: selfOrderSettings.printer?.connection || state.settings.printerConnection || "Bluetooth",
-    printerDevice: selfOrderSettings.printer?.device || state.settings.printerDevice || "",
-    printerDeviceId: selfOrderSettings.printer?.deviceId || state.settings.printerDeviceId || "",
     staffSync: selfOrderSettings.staff || null,
     merchantsSync: selfOrderSettings.merchants || null,
     masterDeletedProducts: normalizeDeletedProductMarkers(selfOrderSettings.masterDeletedProducts || []),
@@ -5570,8 +5562,8 @@ function storeSettingsPayload() {
   const selfOrderSlides = readSelfOrderPromoSlidesFromSettings();
   const promoImage = selfOrderSlides[0]?.image || normalizePersistedImageUrl(settings.selfOrderPromoImageDataUrl || "");
   return {
-    store_name: settings.receiptStoreName || settings.selfOrderAppName || state.outlet || "SEBLAK POS",
-    receipt_footer: settings.receiptFooter ?? "",
+    store_name: settings.selfOrderAppName || state.outlet || "SEBLAK POS",
+    receipt_footer: "Terima kasih",
     self_order_settings: {
       appName: settings.selfOrderAppName || "",
       outletName: settings.selfOrderOutletName || "",
@@ -5581,23 +5573,6 @@ function storeSettingsPayload() {
       promoButtonLabel: settings.selfOrderPromoButtonLabel || "Order Now",
       promoSlides: selfOrderSlides,
       upsellProductIds: normalizeSelfOrderUpsellProductIds(settings.selfOrderUpsellProductIds),
-      receipt: {
-        storeName: settings.receiptStoreName || "",
-        address: settings.receiptAddress || "",
-        phone: settings.receiptPhone || "",
-        footer: settings.receiptFooter || "",
-        width: settings.receiptWidth || "58mm",
-        showTable: settings.receiptShowTable !== false,
-        showQr: settings.receiptShowQr === true,
-        bottomFeedLines: Math.max(0, Math.min(8, Number(settings.receiptBottomFeedLines || 1))),
-        showReceiptCode: settings.receiptShowReceiptCode === true,
-        showOrderQueueNumber: settings.receiptShowOrderQueueNumber === true,
-        showUnitNextToQty: settings.receiptShowUnitNextToQty === true,
-        showReceiptNumber: settings.receiptShowReceiptNumber === true,
-        showTotalQuantity: settings.receiptShowTotalQuantity === true,
-        showCashierLabel: settings.receiptShowCashierLabel === true,
-        headerNote: settings.receiptHeaderNote || ""
-      },
       general: {
         databaseMode: settings.databaseMode || "IndexedDB",
         syncEndpoint: settings.syncEndpoint || "",
@@ -5612,11 +5587,6 @@ function storeSettingsPayload() {
         tone: settings.orderNotificationTone || "bell",
         volume: Math.max(0, Math.min(100, Number(settings.orderNotificationVolume || 70))),
         reminderIntervalSeconds: Math.max(10, Math.min(3600, Number(settings.orderNotificationReminderSeconds || 180)))
-      },
-      printer: {
-        connection: settings.printerConnection || "Bluetooth",
-        device: settings.printerDevice || "",
-        deviceId: settings.printerDeviceId || ""
       },
       staff: staffSyncPayload(),
       merchants: merchantSyncPayload(),
@@ -5694,10 +5664,19 @@ async function syncStoreSettingsToSupabase(options = {}) {
       return false;
     }
     const writePayload = {
-      store_name: payload.store_name,
-      receipt_footer: payload.receipt_footer
+      // Kolom lama ini tetap utuh pada baris yang sudah ada; nilainya bukan lagi sumber struk perangkat.
+      store_name: existing ? existing.store_name : payload.store_name,
+      receipt_footer: existing ? existing.receipt_footer : payload.receipt_footer
     };
-    if (!storeSettingsJsonUnavailable) writePayload.self_order_settings = payload.self_order_settings;
+    if (!storeSettingsJsonUnavailable) {
+      const legacySettings = existing?.self_order_settings || {};
+      writePayload.self_order_settings = {
+        ...payload.self_order_settings,
+        // Jangan hapus data lama saat menyinkronkan akun/merchant dari versi aplikasi baru.
+        ...(legacySettings.receipt ? { receipt: legacySettings.receipt } : {}),
+        ...(legacySettings.printer ? { printer: legacySettings.printer } : {})
+      };
+    }
     const write = data => existing?.id
       ? supabaseClient.from("store_settings").update(data).eq("id", existing.id)
       : supabaseClient.from("store_settings").insert(data);
@@ -8846,6 +8825,27 @@ function printReceiptOrder(order) {
   toast(`Struk ${displayOrderNumber(order.number)} siap dicetak.`);
 }
 
+function openCashDrawerWithNativeBridge(pin = 0) {
+  const openCashDrawer = window.KasirinAndroid?.openCashDrawer;
+  if (typeof openCashDrawer !== "function") return false;
+  try {
+    openCashDrawer.call(window.KasirinAndroid, JSON.stringify({ pin: pin === 1 ? 1 : 0 }));
+    return true;
+  } catch (error) {
+    console.warn("Cash drawer trigger failed", error);
+    return false;
+  }
+}
+
+function openCashDrawerAfterPayment(paymentPayload) {
+  if (state.settings?.cashDrawerEnabled !== true) return;
+  if (state.settings?.printerConnection !== "Bluetooth") return;
+  if (Number(paymentPayload?.paymentBreakdown?.Tunai || 0) <= 0) return;
+  if (!openCashDrawerWithNativeBridge(state.settings.cashDrawerPin)) {
+    toast("Laci tidak dapat dibuka otomatis. Periksa printer Bluetooth di perangkat ini.");
+  }
+}
+
 function orderDiscountAmount(subtotal) {
   const value = Math.max(0, Number(sessionStorage.getItem("pos_discount") || 0) || 0);
   if ((sessionStorage.getItem("pos_discount_type") || "rp") === "percent") return Math.min(subtotal, Math.round(subtotal * Math.min(100, value) / 100));
@@ -11762,6 +11762,7 @@ function renderPosCartPanel() {
         </div>
       ` : cartStep === "payment" ? `
         <div class="cart-payment-page">
+          <div class="payment-form-body">
           <div class="payment-detail-shell">
             <input id="orderType" type="hidden" value="${escapeHtml(orderType)}" />
             <div class="payment-detail-fields">
@@ -11834,6 +11835,7 @@ function renderPosCartPanel() {
                 <button class="save-amount-btn" onclick="saveCurrentPaymentAmount()" ${receivedAmount ? "" : "disabled"}>Simpan nominal ini</button>
               `}
             `}
+          </div>
           </div>
           <div class="final-action-grid">
             <button class="btn pos-pay-button" onclick="submitOrder()" ${cart.length ? "" : "disabled"}>Bayar</button>
@@ -12934,6 +12936,7 @@ async function submitOrder() {
     setLastResult("Pembayaran berhasil", additionalItems.length ? "Pesanan tambahan berhasil dicatat. Struk kasir siap dicetak." : "Pesanan belum bayar sudah dilunasi. Struk kasir siap dicetak.", existingOrder);
     audit("Pesanan belum bayar dilunasi", `${existingOrder.number} ${money(orderTotal(existingOrder))}`);
     saveState();
+    openCashDrawerAfterPayment(paymentPayload);
     const committedProductIds = new Set([...limitedStockItemTotals(additionalItems).values()].map(entry => entry.product.id));
     syncProductsByIds(touchedProductIds.filter(productId => !committedProductIds.has(productId)));
     if (additionalItems.length) {
@@ -13006,6 +13009,7 @@ async function submitOrder() {
   setLastResult("Pesanan berhasil", "Pembayaran lunas. Struk kasir siap dicetak dari halaman ini.", order);
   audit("Transaksi dibuat", `${order.number} ${orderTypeLabel(order.type)} ${money(orderTotal(order))}`);
   saveState();
+  openCashDrawerAfterPayment(paymentPayload);
   const committedProductIds = new Set([...limitedStockItemTotals(order.items).values()].map(entry => entry.product.id));
   syncProductsByIds(touchedProductIds.filter(productId => !committedProductIds.has(productId)));
   rotateLimitedStockReservationToken("POS");
@@ -16277,20 +16281,11 @@ function testReceiptPrintFromSettings(target) {
 
 function saveReceiptSettings(event) {
   event.preventDefault();
-  if (receiptSettingsSaving) return;
-  receiptSettingsSaving = true;
   applyReceiptSettingsFromForm(event.target);
   audit("Pengaturan struk disimpan", state.settings.receiptStoreName);
   saveState();
   render();
-  syncStoreSettingsToSupabase({ silent: true })
-    .then(synced => {
-      toast(synced ? "Setting struk tersimpan." : "Setting struk tersimpan lokal.");
-    })
-    .finally(() => {
-      receiptSettingsSaving = false;
-      render();
-    });
+  toast("Setting struk tersimpan di perangkat ini.");
 }
 
 async function saveNotificationSettings(event) {
@@ -16543,8 +16538,7 @@ function scanNativePrinters() {
       });
       audit("Printer Bluetooth APK dipilih", state.settings.printerDevice);
       saveState();
-      syncStoreSettingsToSupabase({ silent: true }).catch(error => console.error("Printer settings sync failed", error));
-      toast("Printer Bluetooth APK dipilih.");
+      toast("Printer Bluetooth APK tersimpan di perangkat ini.");
       render();
       resolve(true);
     };
@@ -16580,6 +16574,20 @@ function saveNativeDefaultPrinter(device) {
   }
 }
 
+function testCashDrawerFromSettings(target) {
+  const form = new FormData(target);
+  if (form.get("printerConnection") !== "Bluetooth") {
+    toast("Pemicu laci tersedia untuk printer Bluetooth Classic dalam APK.");
+    return;
+  }
+  if (!state.settings?.printerDeviceId) {
+    toast("Pilih dan simpan printer Bluetooth terlebih dahulu.");
+    return;
+  }
+  const pin = form.get("cashDrawerPin") === "1" ? 1 : 0;
+  if (!openCashDrawerWithNativeBridge(pin)) toast("APK ini belum mendukung pemicu laci kasir.");
+}
+
 async function scanPrinters() {
   if (await scanNativePrinters()) return;
   if (!navigator.bluetooth?.requestDevice) {
@@ -16593,15 +16601,14 @@ async function scanPrinters() {
     state.settings.printerDeviceId = device.id || "";
     audit("Printer Bluetooth dipilih", state.settings.printerDevice);
     saveState();
-    syncStoreSettingsToSupabase({ silent: true }).catch(error => console.error("Printer settings sync failed", error));
-    toast("Printer Bluetooth dipilih.");
+    toast("Printer Bluetooth tersimpan di perangkat ini.");
     render();
   } catch (error) {
     if (error?.name !== "NotFoundError") toast("Pemindaian printer dibatalkan atau gagal.");
   }
 }
 
-async function savePrinterSettings(event) {
+function savePrinterSettings(event) {
   event.preventDefault();
   const stopLoading = beginFormSubmitLoading(event.target, "Menyimpan printer...");
   if (!stopLoading) return;
@@ -16609,6 +16616,10 @@ async function savePrinterSettings(event) {
   try {
     state.settings.printerConnection = String(form.get("printerConnection") || "Bluetooth");
     state.settings.printerDevice = String(form.get("printerDevice") || state.settings.printerDevice || "").trim();
+    if (form.has("cashDrawerPin")) {
+      state.settings.cashDrawerEnabled = form.get("cashDrawerEnabled") === "on";
+      state.settings.cashDrawerPin = form.get("cashDrawerPin") === "1" ? 1 : 0;
+    }
     saveNativeDefaultPrinter({
       name: state.settings.printerDevice,
       id: state.settings.printerDeviceId,
@@ -16616,15 +16627,9 @@ async function savePrinterSettings(event) {
     });
     audit("Pengaturan printer disimpan", state.settings.printerDevice || state.settings.printerConnection);
     saveState();
-    try {
-      const synced = await syncStoreSettingsToSupabase({ silent: true });
-      toast(state.settings.printerDevice
-        ? (synced ? "Printer disimpan online." : "Printer disimpan lokal.")
-        : "Koneksi printer disimpan. Pindai perangkat untuk memilih printer.");
-    } catch (error) {
-      console.error("Printer settings sync failed", error);
-      toast(state.settings.printerDevice ? "Printer disimpan lokal." : "Koneksi printer disimpan lokal.");
-    }
+    toast(state.settings.printerDevice
+      ? "Printer tersimpan di perangkat ini."
+      : "Koneksi printer tersimpan di perangkat ini. Pindai untuk memilih printer.");
     render();
   } finally {
     stopLoading();

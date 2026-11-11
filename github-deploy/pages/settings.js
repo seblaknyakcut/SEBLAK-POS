@@ -498,7 +498,7 @@ function renderReceiptSettingsTab() {
   return `
     <section class="settings-panel receipt-settings-panel settings-single-panel receipt-modern-panel settings-receipt-compact">
       <div class="section-title compact-settings-title">
-        <div><h3>Struk</h3><p>Atur informasi yang muncul di cetakan.</p></div>
+        <div><h3>Struk</h3><p>Pengaturan struk tersimpan hanya di perangkat ini.</p></div>
       </div>
       <form class="receipt-settings-modern" onchange="previewReceiptSettings(this)" onsubmit="saveReceiptSettings(event)">
         <div class="receipt-preview-box compact-receipt-preview ${receiptLogoUploading ? "receipt-uploading" : ""}">
@@ -540,9 +540,7 @@ function renderReceiptSettingsTab() {
           <div class="field"><label>Keterangan footer</label><textarea name="receiptFooter">${escapeHtml(settings.receiptFooter || "")}</textarea></div>
           <div class="receipt-action-row">
             <button class="btn" type="button" onclick="testReceiptPrintFromSettings(this.form)">Test Cetak</button>
-            <button class="btn accent settings-save-btn ${receiptSettingsSaving ? "is-loading" : ""}" type="submit" ${receiptSettingsSaving ? "disabled" : ""}>
-              ${receiptSettingsSaving ? `<span class="button-spinner" aria-hidden="true"></span>Menyimpan...` : "Simpan Struk"}
-            </button>
+            <button class="btn accent settings-save-btn" type="submit">Simpan Struk</button>
           </div>
         </div>
       </form>
@@ -556,7 +554,7 @@ function renderPrinterSettingsTab() {
   return `
     <section class="settings-panel settings-single-panel printer-settings-panel">
       <div class="section-title">
-        <div><h3>Pilih Printer</h3><p>Atur perangkat cetak struk dan label.</p></div>
+        <div><h3>Pilih Printer</h3><p>Printer yang dipilih berlaku hanya di perangkat ini.</p></div>
       </div>
       <div class="printer-note">
         <span>i</span>
@@ -597,6 +595,25 @@ function renderPrinterSettingsTab() {
             </div>
           `}
         </div>
+        ${typeof window.KasirinAndroid?.openCashDrawer === "function" ? `
+          <div class="cash-drawer-settings">
+            <div class="cash-drawer-heading">
+              <strong>Laci kasir</strong>
+              <span>Hubungkan laci ke port cash drawer printer. Pengaturan ini hanya berlaku di perangkat ini.</span>
+            </div>
+            ${receiptSwitch("cashDrawerEnabled", "Buka otomatis setelah pembayaran tunai", settings.cashDrawerEnabled === true)}
+            <div class="printer-connect-row cash-drawer-controls">
+              <label class="field">
+                <span>Jalur pemicu</span>
+                <select name="cashDrawerPin">
+                  <option value="0" ${settings.cashDrawerPin !== 1 ? "selected" : ""}>Pin 2 (umum)</option>
+                  <option value="1" ${settings.cashDrawerPin === 1 ? "selected" : ""}>Pin 5</option>
+                </select>
+              </label>
+              <button class="btn" type="button" onclick="testCashDrawerFromSettings(this.form)">Tes buka laci</button>
+            </div>
+          </div>
+        ` : ""}
         <button class="btn accent printer-submit" type="submit">Atur Printer</button>
       </form>
     </section>
